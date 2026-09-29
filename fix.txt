@@ -1,0 +1,1298 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+
+local Player = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Window = Library:CreateWindow({
+    Title = "TCS",
+    SubTitle = "Football",
+})
+
+local Tabs = {
+    SilentAim = Window:AddTab("Silent Aim", "crosshair"),
+    Goalkeeper = Window:AddTab("Goalkeeper", "shield"),
+    Misc = Window:AddTab("Misc", "settings"),
+    Ball = Window:AddTab("Ball", "circle"),
+    Settings = Window:AddTab("Configurações", "settings")
+}
+
+local Character
+local Humanoid
+local RootPart
+
+local function UpdateCharacter()
+    Character = Player.Character or Player.CharacterAdded:Wait()
+    Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    RootPart = Character:FindFirstChild("HumanoidRootPart")
+end
+
+UpdateCharacter()
+
+Player.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    UpdateCharacter()
+end)
+
+local SilentAim = false
+local AimStrength = 1
+local MaxAngle = 90
+
+local PowerShoot = false
+local ShootPower = 120
+
+local MoreCurve = false
+local CurvePower = 35
+
+local FlingBallForce = 100
+
+local Dive = {
+    Enabled = false,
+    Range = 16,
+    Cooldown = 0.35,
+    LastAction = 0,
+    Prediction = 0.35,
+    CenterWidth = 2.5,
+    FrontHeight = 1,
+    HighHeight = 3.5,
+    MinBallSpeed = 4,
+    MinApproachDot = 0.15
+}
+
+local DiveButtons = {
+    Front = "Front Dive",
+    HighLeft = "High Dive Left",
+    HighRight = "High Dive Right",
+    LowLeft = "Dive Left",
+    LowRight = "Dive Right",
+    HighCatch = "High Catch"
+}
+
+local GKBotoes = {}
+
+local CachedBall = nil
+local LastBallSearch = 0
+local BallSearchInterval = 0.25
+
+local function FindTPS()
+    if CachedBall and CachedBall.Parent and CachedBall.Name == "TPS" then
+        return CachedBall
+    end
+
+    local Folder = Workspace:FindFirstChild("WorkspaceLeaderboards")
+
+    if Folder then
+        local TPS = Folder:FindFirstChild("TPS")
+
+        if TPS then
+            CachedBall = TPS
+            return TPS
+        end
+    end
+
+    if tick() - LastBallSearch < BallSearchInterval then
+        return nil
+    end
+
+    LastBallSearch = tick()
+
+    for _, Object in ipairs(Workspace:GetDescendants()) do
+        if Object.Name == "TPS" then
+            CachedBall = Object
+            return Object
+        end
+    end
+
+    CachedBall = nil
+    return nil
+end
+
+Workspace.DescendantAdded:Connect(function(Object)
+    if Object.Name == "TPS" then
+        task.defer(function()
+            if Object.Parent then
+                CachedBall = Object
+            end
+        end)
+    end
+end)
+
+Workspace.DescendantRemoving:Connect(function(Object)
+    if Object == CachedBall then
+        CachedBall = nil
+    end
+end)
+
+local function GetValidBall(Object)
+    if not Object then
+        return nil
+    end
+
+    if Object:IsA("BasePart") then
+        return Object
+    end
+
+    if Object:IsA("Model") then
+        if Object.PrimaryPart then
+            return Object.PrimaryPart
+        end
+
+        return Object:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    return nil
+end
+
+local function GetBall()
+    return GetValidBall(FindTPS())
+end
+
+local function EscanearBotoesGK()
+    GKBotoes = {}
+
+    local PlayerGui = Player:FindFirstChildOfClass("PlayerGui")
+    if not PlayerGui then
+        return
+    end
+
+    for _, Object in ipairs(PlayerGui:GetDescendants()) do
+        if Object:IsA("TextButton") or Object:IsA("ImageButton") then
+            local Name = string.lower(Object.Name)
+            local Text = ""
+
+            pcall(function()
+                Text = string.lower(Object.Text or "")
+            end)
+
+            if Name:find("gk")
+                or Name:find("dive")
+                or Name:find("catch")
+                or Name:find("high")
+                or Name:find("low")
+                or Name:find("reflex")
+                or Name:find("forward")
+                or Name:find("front")
+                or Name:find("rush")
+                or Text:find("gk")
+                or Text:find("dive")
+                or Text:find("catch")
+                or Text:find("high")
+                or Text:find("low")
+                or Text:find("reflex")
+                or Text:find("forward")
+                or Text:find("front")
+                or Text:find("rush") then
+
+                table.insert(GKBotoes, Object)
+            end
+        end
+    end
+end
+
+local function EncontrarBotaoPorTexto(Texto)
+    local Procurado = string.lower(Texto)
+
+    for _, Button in ipairs(GKBotoes) do
+        if Button and Button.Parent then
+            local Name = string.lower(Button.Name)
+            local Text = ""
+
+            pcall(function()
+                Text = string.lower(Button.Text or "")
+            end)
+
+            if Name == Procurado or Text == Procurado then
+                return Button
+            end
+        end
+    end
+
+    for _, Button in ipairs(GKBotoes) do
+        if Button and Button.Parent then
+            local Name = string.lower(Button.Name)
+            local Text = ""
+
+            pcall(function()
+                Text = string.lower(Button.Text or "")
+            end)
+
+            if Name:find(Procurado, 1, true)
+                or Text:find(Procurado, 1, true) then
+                return Button
+            end
+        end
+    end
+
+    return nil
+end
+
+local function ClicarBotao(Button)
+    if not Button or typeof(firesignal) ~= "function" then
+        return false
+    end
+
+    local Signals = {
+        Button.Activated,
+        Button.MouseButton1Click,
+        Button.MouseButton1Down,
+        Button.MouseButton1Up,
+        Button.TouchTap
+    }
+
+    for _, Signal in ipairs(Signals) do
+        pcall(function()
+            firesignal(Signal)
+        end)
+    end
+
+    return true
+end
+
+local function GetDivePrediction(Ball)
+    if not Ball or not RootPart then
+        return nil
+    end
+
+    local Position = Ball.Position
+    local Velocity = Ball.AssemblyLinearVelocity
+    local Speed = Velocity.Magnitude
+
+    if Speed < Dive.MinBallSpeed then
+        return nil
+    end
+
+    local Distance = (Position - RootPart.Position).Magnitude
+    local TravelTime = math.clamp(Distance / Speed, 0, Dive.Prediction)
+    local Predicted = Position + Velocity * TravelTime
+
+    local Relative = Predicted - RootPart.Position
+    local Horizontal = Vector3.new(Relative.X, 0, Relative.Z)
+
+    local Right = RootPart.CFrame.RightVector
+    local RightHorizontal = Vector3.new(Right.X, 0, Right.Z)
+
+    local Side = Horizontal:Dot(RightHorizontal)
+
+    return {
+        Position = Predicted,
+        Side = Side,
+        Height = Relative.Y,
+        IsCentral = math.abs(Side) <= Dive.CenterWidth,
+        IsHigh = Relative.Y >= Dive.HighHeight,
+        IsFront = Relative.Y <= Dive.FrontHeight
+    }
+end
+
+local function GetDiveAction(Data)
+    if not Data then
+        return nil
+    end
+
+    if Data.IsHigh and Data.IsCentral then
+        return DiveButtons.HighCatch
+    end
+
+    if Data.IsFront and Data.IsCentral then
+        return DiveButtons.Front
+    end
+
+    if Data.IsHigh then
+        return Data.Side < 0
+            and DiveButtons.HighLeft
+            or DiveButtons.HighRight
+    end
+
+    return Data.Side < 0
+        and DiveButtons.LowLeft
+        or DiveButtons.LowRight
+end
+
+local function ExecuteDiveAction(Action)
+    if not Action then
+        return false
+    end
+
+    local Button = EncontrarBotaoPorTexto(Action)
+
+    if not Button then
+        EscanearBotoesGK()
+        Button = EncontrarBotaoPorTexto(Action)
+    end
+
+    if not Button then
+        return false
+    end
+
+    if Action == DiveButtons.HighCatch and Humanoid then
+        pcall(function()
+            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end)
+
+        task.wait(0.05)
+    end
+
+    return ClicarBotao(Button)
+end
+
+local function IsBallComingToGoalkeeper(Ball)
+    if not Ball or not RootPart then
+        return false
+    end
+
+    local Velocity = Vector3.new(
+        Ball.AssemblyLinearVelocity.X,
+        0,
+        Ball.AssemblyLinearVelocity.Z
+    )
+
+    if Velocity.Magnitude < Dive.MinBallSpeed then
+        return false
+    end
+
+    local Direction = RootPart.Position - Ball.Position
+    Direction = Vector3.new(Direction.X, 0, Direction.Z)
+
+    if Direction.Magnitude <= 0 then
+        return false
+    end
+
+    local Dot = Velocity.Unit:Dot(Direction.Unit)
+
+    return Dot >= Dive.MinApproachDot
+end
+
+local function ExecuteAutoDive(Ball)
+    local Data = GetDivePrediction(Ball)
+
+    if not Data then
+        return
+    end
+
+    local Action = GetDiveAction(Data)
+
+    if ExecuteDiveAction(Action) then
+        Dive.LastAction = tick()
+    end
+end
+
+local AutoDiveConnection
+
+local function StartAutoDive()
+    if AutoDiveConnection then
+        return
+    end
+
+    AutoDiveConnection = RunService.Heartbeat:Connect(function()
+        if not Dive.Enabled then
+            return
+        end
+
+        if not RootPart or not RootPart.Parent then
+            UpdateCharacter()
+            return
+        end
+
+        if tick() - Dive.LastAction < Dive.Cooldown then
+            return
+        end
+
+        local Ball = GetBall()
+
+        if not Ball then
+            return
+        end
+
+        if (Ball.Position - RootPart.Position).Magnitude > Dive.Range then
+            return
+        end
+
+        if not IsBallComingToGoalkeeper(Ball) then
+            return
+        end
+
+        ExecuteAutoDive(Ball)
+    end)
+end
+
+local function StopAutoDive()
+    if AutoDiveConnection then
+        AutoDiveConnection:Disconnect()
+        AutoDiveConnection = nil
+    end
+end
+
+local function ApplySilentAim()
+    if not SilentAim or not RootPart or not RootPart.Parent then
+        return
+    end
+
+    local Ball = GetBall()
+
+    if not Ball then
+        return
+    end
+
+    local Direction = Ball.Position - RootPart.Position
+    local FlatDirection = Vector3.new(
+        Direction.X,
+        0,
+        Direction.Z
+    )
+
+    if FlatDirection.Magnitude <= 0 then
+        return
+    end
+
+    FlatDirection = FlatDirection.Unit
+
+    local Look = RootPart.CFrame.LookVector
+    local FlatLook = Vector3.new(
+        Look.X,
+        0,
+        Look.Z
+    )
+
+    if FlatLook.Magnitude <= 0 then
+        return
+    end
+
+    FlatLook = FlatLook.Unit
+
+    local Angle = math.deg(
+        math.acos(
+            math.clamp(
+                FlatLook:Dot(FlatDirection),
+                -1,
+                1
+            )
+        )
+    )
+
+    if Angle > MaxAngle then
+        return
+    end
+
+    local NewDirection =
+        FlatLook:Lerp(
+            FlatDirection,
+            math.clamp(AimStrength, 0, 1)
+        )
+
+    RootPart.CFrame = CFrame.lookAt(
+        RootPart.Position,
+        RootPart.Position + NewDirection
+    )
+end
+
+local PowerShootEnabled = false
+local PowerShootForce = 250
+local PowerShootRange = 8
+local LastPowerShoot = 0
+
+local function CheckPowerShoot()
+    if not PowerShootEnabled then
+        return
+    end
+
+    local Now = tick()
+
+    if Now - LastPowerShoot < 0.08 then
+        return
+    end
+
+    LastPowerShoot = Now
+
+    if not RootPart or not RootPart.Parent then
+        return
+    end
+
+    local Ball = GetBall()
+
+    if not Ball then
+        return
+    end
+
+    local Distance =
+        (Ball.Position - RootPart.Position).Magnitude
+
+    if Distance > PowerShootRange then
+        return
+    end
+
+    local DirectionToBall =
+        (Ball.Position - RootPart.Position).Unit
+
+    local ShootDirection =
+        (
+            RootPart.CFrame.LookVector
+            + DirectionToBall
+        ).Unit
+
+    Ball.AssemblyLinearVelocity =
+        ShootDirection * PowerShootForce
+        + Vector3.new(
+            0,
+            PowerShootForce * 0.3,
+            0
+        )
+
+    Ball.AssemblyAngularVelocity = Vector3.new(
+        math.random(-20, 20),
+        math.random(-20, 20),
+        math.random(-20, 20)
+    )
+
+    pcall(function()
+        firetouchinterest(RootPart, Ball, 0)
+        firetouchinterest(RootPart, Ball, 1)
+    end)
+end
+
+local ReachEnabled = false
+local ReachDistance = 10
+local LastReach = 0
+
+local function TouchBall(Ball)
+    if not Ball or not Ball.Parent then
+        return
+    end
+
+    if not RootPart or not RootPart.Parent then
+        return
+    end
+
+    pcall(function()
+        firetouchinterest(RootPart, Ball, 0)
+        firetouchinterest(RootPart, Ball, 1)
+    end)
+
+    if not Character then
+        return
+    end
+
+    local LeftFoot =
+        Character:FindFirstChild("Left Foot")
+        or Character:FindFirstChild("Left Leg")
+
+    local RightFoot =
+        Character:FindFirstChild("Right Foot")
+        or Character:FindFirstChild("Right Leg")
+
+    if LeftFoot then
+        pcall(function()
+            firetouchinterest(LeftFoot, Ball, 0)
+            firetouchinterest(LeftFoot, Ball, 1)
+        end)
+    end
+
+    if RightFoot then
+        pcall(function()
+            firetouchinterest(RightFoot, Ball, 0)
+            firetouchinterest(RightFoot, Ball, 1)
+        end)
+    end
+end
+
+local AutoFollowEnabled = false
+
+local function HabilidadeAtiva()
+    if not Humanoid then
+        return true
+    end
+
+    if Humanoid.Sit or Humanoid.SeatPart then
+        return true
+    end
+
+    local Estado = Humanoid:GetState()
+
+    return Estado ~= Enum.HumanoidStateType.Running
+        and Estado ~= Enum.HumanoidStateType.RunningNoPhysics
+        and Estado ~= Enum.HumanoidStateType.Jumping
+        and Estado ~= Enum.HumanoidStateType.Landed
+        and Estado ~= Enum.HumanoidStateType.Freefall
+end
+
+local function IsManualInputActive()
+    return UserInputService:IsKeyDown(Enum.KeyCode.W)
+        or UserInputService:IsKeyDown(Enum.KeyCode.A)
+        or UserInputService:IsKeyDown(Enum.KeyCode.S)
+        or UserInputService:IsKeyDown(Enum.KeyCode.D)
+end
+
+local function FlingBall()
+    local Ball = GetBall()
+
+    if not Ball or not RootPart then
+        return
+    end
+
+    local Direction = Ball.Position - RootPart.Position
+
+    if Direction.Magnitude <= 0 then
+        return
+    end
+
+    RootPart.CFrame = CFrame.new(
+        Ball.Position
+        - Direction.Unit * 1.5
+        + Vector3.new(0, 1, 0)
+    )
+
+    task.wait(0.1)
+
+    if not Ball or not Ball.Parent then
+        return
+    end
+
+    local RandomDirection = Vector3.new(
+        math.random(-100, 100),
+        100,
+        math.random(-100, 100)
+    ).Unit
+
+    Ball.AssemblyLinearVelocity =
+        RandomDirection * FlingBallForce
+        + Vector3.new(
+            0,
+            FlingBallForce * 0.6,
+            0
+        )
+
+    Ball.AssemblyAngularVelocity = Vector3.new(
+        math.random(-50, 50),
+        math.random(-50, 50),
+        math.random(-50, 50)
+    )
+end
+
+local CurveBallMode = "Desativar"
+local CurveBallForce = 30
+local CurveBallOnKick = true
+local CurveBallKickDuration = 0.5
+local CurveBallAlwaysActive = false
+local CurveBallKickEnd = 0
+local CurveBallConnection
+
+local function AplicarCurva(Ball, DeltaTime)
+    if not Ball or not Ball.Parent then
+        return
+    end
+
+    local Velocity = Ball.AssemblyLinearVelocity
+
+    local HorizontalVelocity =
+        Vector3.new(
+            Velocity.X,
+            0,
+            Velocity.Z
+        )
+
+    if HorizontalVelocity.Magnitude < 5 then
+        return
+    end
+
+    local Forward = HorizontalVelocity.Unit
+    local Force
+
+    if CurveBallMode == "Direita" then
+        Force = Vector3.new(
+            Forward.Z,
+            0,
+            -Forward.X
+        )
+    elseif CurveBallMode == "Esquerda" then
+        Force = Vector3.new(
+            -Forward.Z,
+            0,
+            Forward.X
+        )
+    elseif CurveBallMode == "Cima" then
+        Force = Vector3.new(0, 1, 0)
+    else
+        return
+    end
+
+    local CurveForce =
+        Force * CurveBallForce * DeltaTime * 60
+
+    local FinalVelocity =
+        Velocity + CurveForce
+
+    local FinalHorizontal =
+        Vector3.new(
+            FinalVelocity.X,
+            0,
+            FinalVelocity.Z
+        )
+
+    if FinalHorizontal.Magnitude > 0
+        and FinalHorizontal.Unit:Dot(Forward) < 0.5 then
+
+        local Corrected =
+            Forward * HorizontalVelocity.Magnitude * 0.9
+            + Vector3.new(
+                CurveForce.X,
+                0,
+                CurveForce.Z
+            )
+
+        FinalVelocity = Vector3.new(
+            Corrected.X,
+            FinalVelocity.Y,
+            Corrected.Z
+        )
+    end
+
+    Ball.AssemblyLinearVelocity = FinalVelocity
+end
+
+local function StartCurveBall()
+    if CurveBallConnection then
+        return
+    end
+
+    CurveBallConnection =
+        RunService.Heartbeat:Connect(function(DeltaTime)
+            if CurveBallMode == "Desativar" then
+                return
+            end
+
+            if CurveBallOnKick
+                and not CurveBallAlwaysActive
+                and tick() > CurveBallKickEnd then
+                return
+            end
+
+            local Ball = GetBall()
+
+            if Ball then
+                AplicarCurva(Ball, DeltaTime)
+            end
+        end)
+end
+
+local function StopCurveBall()
+    if CurveBallConnection then
+        CurveBallConnection:Disconnect()
+        CurveBallConnection = nil
+    end
+end
+
+local ToolConnections = {}
+
+local function HookCurveTool(Tool)
+    if not Tool or not Tool:IsA("Tool") then
+        return
+    end
+
+    if ToolConnections[Tool] then
+        return
+    end
+
+    local Name = string.lower(Tool.Name)
+
+    if not (
+        Name:find("chutar")
+        or Name:find("chute")
+        or Name:find("kick")
+        or Name:find("shoot")
+        or Name:find("bater")
+        or Name:find("toque")
+    ) then
+        return
+    end
+
+    ToolConnections[Tool] =
+        Tool.Activated:Connect(function()
+            CurveBallKickEnd =
+                tick() + CurveBallKickDuration
+        end)
+end
+
+local function ScanTools()
+    if Character then
+        for _, Tool in ipairs(Character:GetChildren()) do
+            HookCurveTool(Tool)
+        end
+    end
+
+    local Backpack =
+        Player:FindFirstChildOfClass("Backpack")
+
+    if Backpack then
+        for _, Tool in ipairs(Backpack:GetChildren()) do
+            HookCurveTool(Tool)
+        end
+    end
+end
+
+local function ConnectToolAdded(Container)
+    if not Container then
+        return
+    end
+
+    Container.ChildAdded:Connect(function(Object)
+        if Object:IsA("Tool") then
+            task.defer(function()
+                HookCurveTool(Object)
+            end)
+        end
+    end)
+end
+
+local PowerGroup =
+    Tabs.Misc:AddLeftGroupbox("Power Shoot")
+
+PowerGroup:AddToggle("PowerShoot", {
+    Text = "Power Shoot",
+    Default = false,
+    Callback = function(Value)
+        PowerShootEnabled = Value
+    end
+})
+
+PowerGroup:AddSlider("ShootPower", {
+    Text = "Power",
+    Min = 20,
+    Max = 300,
+    Default = 120,
+    Callback = function(Value)
+        PowerShootForce = Value
+    end
+})
+
+local CurveGroup =
+    Tabs.Misc:AddRightGroupbox("More Curve")
+
+CurveGroup:AddToggle("MoreCurve", {
+    Text = "More Curve",
+    Default = false,
+    Callback = function(Value)
+        MoreCurve = Value
+    end
+})
+
+CurveGroup:AddSlider("CurvePower", {
+    Text = "Curve",
+    Min = 0,
+    Max = 150,
+    Default = 35,
+    Callback = function(Value)
+        CurvePower = Value
+    end
+})
+
+local BallPowerGroup =
+    Tabs.Ball:AddLeftGroupbox("Power Shoot")
+
+BallPowerGroup:AddToggle("BallPowerShoot", {
+    Text = "Power Shoot",
+    Default = false,
+    Callback = function(Value)
+        PowerShootEnabled = Value
+    end
+})
+
+BallPowerGroup:AddSlider("BallPower", {
+    Text = "Power",
+    Min = 100,
+    Max = 800,
+    Default = 250,
+    Callback = function(Value)
+        PowerShootForce = Value
+    end
+})
+
+BallPowerGroup:AddSlider("BallRange", {
+    Text = "Range",
+    Min = 3,
+    Max = 20,
+    Default = 8,
+    Callback = function(Value)
+        PowerShootRange = Value
+    end
+})
+
+local ReachGroup =
+    Tabs.Ball:AddRightGroupbox("Reach")
+
+ReachGroup:AddToggle("Reach", {
+    Text = "Reach",
+    Default = false,
+    Callback = function(Value)
+        ReachEnabled = Value
+    end
+})
+
+ReachGroup:AddSlider("ReachDistance", {
+    Text = "Distance",
+    Min = 1,
+    Max = 50,
+    Default = 10,
+    Callback = function(Value)
+        ReachDistance = Value
+    end
+})
+
+local TeleportGroup =
+    Tabs.Ball:AddLeftGroupbox("Teleport Ball")
+
+TeleportGroup:AddButton("TeleportBall", function()
+    if not RootPart or not RootPart.Parent then
+        return
+    end
+
+    local Ball = GetBall()
+
+    if not Ball then
+        return
+    end
+
+    local Direction =
+        Ball.Position - RootPart.Position
+
+    if Direction.Magnitude <= 0 then
+        return
+    end
+
+    RootPart.CFrame = CFrame.new(
+        Ball.Position
+        - Direction.Unit * 2.5
+        + Vector3.new(0, 2, 0)
+    )
+end)
+
+local FollowGroup =
+    Tabs.Ball:AddRightGroupbox("Auto Follow")
+
+FollowGroup:AddToggle("AutoFollow", {
+    Text = "Auto Follow",
+    Default = false,
+    Callback = function(Value)
+        AutoFollowEnabled = Value
+    end
+})
+
+local FlingGroup =
+    Tabs.Ball:AddLeftGroupbox("Fling Ball")
+
+FlingGroup:AddButton("FlingBall", function()
+    FlingBall()
+end)
+
+FlingGroup:AddSlider("FlingBallForce", {
+    Text = "Force",
+    Min = 100,
+    Max = 800,
+    Default = 300,
+    Callback = function(Value)
+        FlingBallForce = Value
+    end
+})
+
+local CurveBallGroup =
+    Tabs.Ball:AddRightGroupbox("Curve Ball")
+
+CurveBallGroup:AddDropdown("CurveMode", {
+    Values = {
+        "Desativar",
+        "Direita",
+        "Esquerda",
+        "Cima"
+    },
+    Default = "Desativar",
+    Multi = false,
+    Text = "Direction",
+    Callback = function(Value)
+        CurveBallMode = Value
+
+        if Value == "Desativar" then
+            StopCurveBall()
+        else
+            StartCurveBall()
+        end
+    end
+})
+
+CurveBallGroup:AddSlider("CurveForce", {
+    Text = "Force",
+    Min = 5,
+    Max = 100,
+    Default = 30,
+    Callback = function(Value)
+        CurveBallForce = Value
+    end
+})
+
+CurveBallGroup:AddToggle("CurveOnKick", {
+    Text = "Only On Kick",
+    Default = true,
+    Callback = function(Value)
+        CurveBallOnKick = Value
+    end
+})
+
+CurveBallGroup:AddSlider("CurveDuration", {
+    Text = "Duration",
+    Min = 0.1,
+    Max = 3,
+    Default = 0.5,
+    Rounding = 1,
+    Callback = function(Value)
+        CurveBallKickDuration = Value
+    end
+})
+
+CurveBallGroup:AddToggle("CurveAlways", {
+    Text = "Always Active",
+    Default = false,
+    Callback = function(Value)
+        CurveBallAlwaysActive = Value
+    end
+})
+
+local SilentGroup =
+    Tabs.SilentAim:AddLeftGroupbox("Silent Aim")
+
+SilentGroup:AddToggle("SilentAim", {
+    Text = "Silent Aim",
+    Default = false,
+    Callback = function(Value)
+        SilentAim = Value
+    end
+})
+
+SilentGroup:AddSlider("AimStrength", {
+    Text = "Aim Strength",
+    Min = 0,
+    Max = 1,
+    Default = 1,
+    Rounding = 2,
+    Callback = function(Value)
+        AimStrength = Value
+    end
+})
+
+SilentGroup:AddSlider("MaxAngle", {
+    Text = "Max Angle",
+    Min = 1,
+    Max = 180,
+    Default = 90,
+    Callback = function(Value)
+        MaxAngle = Value
+    end
+})
+
+local DiveGroup =
+    Tabs.Goalkeeper:AddLeftGroupbox("Auto Dive")
+
+DiveGroup:AddToggle("AutoDive", {
+    Text = "Auto Dive",
+    Default = false,
+    Callback = function(Value)
+        Dive.Enabled = Value
+
+        if Value then
+            StartAutoDive()
+        else
+            StopAutoDive()
+        end
+    end
+})
+
+DiveGroup:AddSlider("DiveRange", {
+    Text = "Distance",
+    Min = 5,
+    Max = 50,
+    Default = 16,
+    Callback = function(Value)
+        Dive.Range = Value
+    end
+})
+
+DiveGroup:AddSlider("DiveCooldown", {
+    Text = "Cooldown",
+    Min = 0.05,
+    Max = 2,
+    Default = 0.35,
+    Rounding = 2,
+    Callback = function(Value)
+        Dive.Cooldown = Value
+    end
+})
+
+DiveGroup:AddSlider("Prediction", {
+    Text = "Prediction",
+    Min = 0,
+    Max = 1,
+    Default = 0.35,
+    Rounding = 2,
+    Callback = function(Value)
+        Dive.Prediction = Value
+    end
+})
+
+local SettingsTab = Tabs.Settings
+
+local MenuGroup =
+    SettingsTab:AddLeftGroupbox("Menu")
+
+MenuGroup:AddButton("Unload", function()
+    StopAutoDive()
+    StopCurveBall()
+
+    for Tool, Connection in pairs(ToolConnections) do
+        pcall(function()
+            Connection:Disconnect()
+        end)
+    end
+
+    table.clear(ToolConnections)
+
+    Library:Unload()
+end)
+
+MenuGroup:AddLabel("Tecla para abrir/fechar: RightControl")
+
+local ThemeGroup =
+    SettingsTab:AddRightGroupbox("Tema")
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+
+ThemeManager:SetFolder("TCS")
+SaveManager:SetFolder("TCS/Configs")
+
+ThemeManager:ApplyToTab(SettingsTab)
+SaveManager:BuildConfigSection(SettingsTab)
+
+Library:OnUnload(function()
+    StopAutoDive()
+    StopCurveBall()
+
+    for Tool, Connection in pairs(ToolConnections) do
+        pcall(function()
+            Connection:Disconnect()
+        end)
+    end
+
+    table.clear(ToolConnections)
+end)
+
+local Backpack =
+    Player:FindFirstChildOfClass("Backpack")
+
+ConnectToolAdded(Backpack)
+ConnectToolAdded(Character)
+
+Player.CharacterAdded:Connect(function(NewCharacter)
+    task.wait(0.5)
+
+    Character = NewCharacter
+    Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    RootPart = Character:FindFirstChild("HumanoidRootPart")
+
+    ConnectToolAdded(Character)
+
+    task.defer(ScanTools)
+end)
+
+task.defer(ScanTools)
+task.defer(EscanearBotoesGK)
+
+local LastGKScan = 0
+local LastSilentAim = 0
+local LastFollow = 0
+local LastReach = 0
+
+local SilentAimInterval = 1 / 30
+local FollowInterval = 1 / 30
+local ReachInterval = 0.08
+
+RunService.Heartbeat:Connect(function()
+    local Now = tick()
+
+    if SilentAim and Now - LastSilentAim >= SilentAimInterval then
+        LastSilentAim = Now
+        ApplySilentAim()
+    end
+
+    if CurveBallMode ~= "Desativar" then
+        if not CurveBallConnection then
+            StartCurveBall()
+        end
+    end
+
+    if Now - LastGKScan >= 2 then
+        LastGKScan = Now
+        EscanearBotoesGK()
+        ScanTools()
+    end
+end)
+
+RunService.PreRender:Connect(function()
+    if not RootPart
+        or not RootPart.Parent
+        or not Humanoid then
+        return
+    end
+
+    local Now = tick()
+    local Ball = GetBall()
+
+    if not Ball then
+        return
+    end
+
+    if AutoFollowEnabled
+        and Now - LastFollow >= FollowInterval then
+
+        LastFollow = Now
+
+        if not HabilidadeAtiva()
+            and not IsManualInputActive() then
+
+            local Delta =
+                Ball.Position - RootPart.Position
+
+            local MoveDirection =
+                Vector3.new(
+                    Delta.X,
+                    0,
+                    Delta.Z
+                )
+
+            if MoveDirection.Magnitude > 0.5 then
+                Humanoid:Move(
+                    MoveDirection.Unit,
+                    false
+                )
+            end
+        end
+    end
+
+    if ReachEnabled
+        and Now - LastReach >= ReachInterval then
+
+        LastReach = Now
+
+        if not HabilidadeAtiva() then
+            local Distance =
+                (Ball.Position - RootPart.Position).Magnitude
+
+            if Distance <= ReachDistance then
+                TouchBall(Ball)
+            end
+        end
+    end
+
+    CheckPowerShoot()
+end)
